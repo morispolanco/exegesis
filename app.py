@@ -1,7 +1,6 @@
 import streamlit as st
 import google.generativeai as genai
 import os
-# Ya no necesitamos python-dotenv explícitamente aquí si usamos st.secrets
 
 # --- Configuración Inicial y Carga de API Key ---
 
@@ -15,24 +14,25 @@ st.caption("Generada usando Google Gemini 1.5 Flash")
 api_configured = False
 gemini_api_key = None # Variable para almacenar la clave
 
-# --- Funciones de la Lógica Principal (Adaptadas) ---
+# --- Funciones de la Lógica Principal ---
 
 def configurar_api(api_key_to_configure):
-    """Configura la API de Gemini con la clave proporcionada."""
+    """Configura la API de Gemini con la clave proporcionada. Devuelve True/False."""
     global api_configured
     if not api_key_to_configure:
-        # Este caso no debería ocurrir si llamamos correctamente, pero por seguridad
-        st.error("❌ No se proporcionó una clave API para configurar.")
+        # Ya no mostramos error aquí, la verificación se hará fuera
         api_configured = False
         return False
     try:
         genai.configure(api_key=api_key_to_configure)
         # Pequeña prueba para verificar la clave (opcional pero útil)
-        # _ = genai.list_models()
+        # _ = genai.list_models() # Descomentar si quieres una validación más estricta
         api_configured = True
+        print("API de Gemini configurada correctamente.") # Mensaje para logs/consola
         return True # Éxito
     except Exception as e:
-        st.error(f"❌ Error al configurar la API de Gemini con la clave proporcionada: {e}")
+        # Mostramos el error en la interfaz principal más adelante
+        st.error(f"❌ Error al configurar la API de Gemini: {e}. Verifica tu clave en st.secrets.")
         api_configured = False
         return False
 
@@ -70,12 +70,10 @@ def construir_prompt(libro, capitulo):
 def generar_exegesis(libro, capitulo):
     """Llama a la API de Gemini para generar la exégesis. Asume que la API ya está configurada."""
     if not api_configured:
-         # Este chequeo es una segunda capa de seguridad. La configuración debe hacerse antes.
          st.error("Error interno: La función generar_exegesis fue llamada sin que la API estuviera configurada.")
          return None
 
     try:
-        # Ya no necesitamos configurar el modelo aquí si genai está configurado globalmente
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
         prompt_texto = construir_prompt(libro, capitulo)
 
@@ -112,78 +110,55 @@ def generar_exegesis(libro, capitulo):
         st.error(f"❌ Error durante la generación con la API de Gemini: {e}")
         return None
 
-# --- Sidebar para Configuración y Ayuda ---
-with st.sidebar:
-    st.header("Configuración de API Key")
-
-    # Instrucciones claras sobre st.secrets
-    st.markdown("""
-    La forma recomendada y segura de configurar tu API Key de Google (Gemini) es usando los **Secretos de Streamlit**:
-    1.  **Localmente:** Crea un archivo `.streamlit/secrets.toml` y añade `GEMINI_API_KEY = "TU_CLAVE"`.
-    2.  **Desplegado (Streamlit Community Cloud):** Pega el contenido de tu `secrets.toml` en la configuración de Secretos de tu aplicación.
-    """)
-    st.markdown("---")
-
-    # Intentar obtener la clave de st.secrets
-    try:
-        gemini_api_key = st.secrets.get("GEMINI_API_KEY")
-    except Exception as e:
-         st.warning(f"No se pudo leer st.secrets (puede ser normal si no está configurado): {e}")
-         gemini_api_key = None
-
-    # Input manual como *alternativa* si no se encuentra en secrets
-    api_key_input_manual = st.text_input(
-        "O introduce tu API Key manualmente (menos seguro):",
-        type="password",
-        help="Es preferible usar st.secrets.",
-        key="manual_api_key" # Añadir una clave única para el widget
-    )
-
-    # Botón explícito para intentar configurar si se usa la entrada manual
-    if api_key_input_manual and not gemini_api_key: # Mostrar solo si no hay secreto y hay texto
-        if st.button("Configurar con clave manual"):
-            if configurar_api(api_key_input_manual):
-                st.success("✅ API Key configurada manualmente.")
-                gemini_api_key = api_key_input_manual # Guardar la clave que funcionó
-            else:
-                # El error ya se muestra en configurar_api
-                pass
-    elif gemini_api_key and not api_configured:
-         # Si la clave se encontró en secrets, intentar configurar automáticamente
-         if configurar_api(gemini_api_key):
-              st.success("✅ API Key cargada y configurada desde st.secrets.")
-         else:
-              # El error ya se muestra en configurar_api
-              st.warning("Clave encontrada en st.secrets, pero falló la configuración.")
-    elif api_configured:
-        st.success("✅ API Key ya configurada.") # Indicar que ya está lista
+# --- INTENTO DE CONFIGURACIÓN AUTOMÁTICA DE LA API ---
+# Esta parte se ejecuta *antes* de renderizar la interfaz principal
+try:
+    gemini_api_key = st.secrets.get("GEMINI_API_KEY")
+    if gemini_api_key:
+        # Intentar configurar la API si se encontró la clave
+        configurar_api(gemini_api_key)
     else:
-        st.info("Esperando configuración de API Key...")
+        # La clave no está en secrets, api_configured seguirá siendo False
+        pass # No hacer nada más aquí, el mensaje de error se mostrará abajo
+except Exception as e:
+    # Manejar error si st.secrets no está disponible (ej. entorno local sin .streamlit/secrets.toml)
+    # api_configured seguirá siendo False
+    # st.warning(f"No se pudo acceder a st.secrets. Asegúrate de configurar secrets.toml localmente o en la plataforma de despliegue. Error: {e}")
+    pass # El mensaje principal de error será suficiente
 
-
-    st.markdown("---")
-    st.subheader("Instrucciones de Uso")
+# --- Sidebar (Simplificada) ---
+with st.sidebar:
+    st.header("Instrucciones de Uso")
     st.markdown("""
-    1.  Asegúrate de que la **API Key esté configurada** (preferiblemente vía `st.secrets`).
-    2.  Escribe el **Libro** y **Capítulo**.
+    1.  Asegúrate de que tu API Key de Google (Gemini) esté configurada correctamente en los **Secretos de Streamlit** (clave `GEMINI_API_KEY`).
+        *   **Local:** Archivo `.streamlit/secrets.toml`.
+        *   **Desplegado:** Sección de Secretos de la plataforma.
+    2.  Escribe el **Libro** y **Capítulo** en la pantalla principal.
     3.  Haz clic en **"Generar Exégesis"**.
     """)
     st.markdown("---")
     st.warning("""
     **Importante:** La IA es una herramienta. Verifica siempre las fuentes y consulta múltiples recursos académicos.
     """)
+    st.markdown("---")
+    # Puedes añadir aquí otros elementos no relacionados con la API Key si lo deseas
 
 
 # --- Interfaz Principal de Streamlit ---
 
-# Columnas para los inputs
+# Mostrar mensaje de error si la API no se pudo configurar
+if not api_configured:
+    st.error("🛑 **Error de Configuración:** No se encontró o no es válida la API Key de Gemini (`GEMINI_API_KEY`) en los Secretos de Streamlit. La aplicación no puede funcionar.")
+    st.info("Por favor, configura la clave API en los secretos (localmente en `.streamlit/secrets.toml` o en la configuración de despliegue) y refresca la página.")
+
+# Columnas para los inputs (se mostrarán siempre, pero el botón estará deshabilitado si no hay API)
 col1, col2 = st.columns(2)
 
 with col1:
-    libro_input = st.text_input("Libro de la Biblia:", placeholder="Ej. Génesis", key="libro")
+    libro_input = st.text_input("Libro de la Biblia:", placeholder="Ej. Génesis", key="libro", disabled=not api_configured)
 
 with col2:
-    capitulo_input = st.number_input("Capítulo:", min_value=1, step=1, format="%d", placeholder="Ej. 1", key="capitulo")
+    capitulo_input = st.number_input("Capítulo:", min_value=1, step=1, format="%d", placeholder="Ej. 1", key="capitulo", disabled=not api_configured)
 
 # Botón para iniciar la generación, deshabilitado si la API no está configurada
 generar_btn = st.button(
@@ -194,8 +169,8 @@ generar_btn = st.button(
 )
 
 # --- Lógica de Ejecución al Presionar el Botón ---
-if generar_btn:
-    # Validaciones de entrada (la API ya debe estar configurada para que el botón esté activo)
+if generar_btn and api_configured: # Doble chequeo por si acaso
+    # Validaciones de entrada
     if not libro_input:
         st.warning("⚠️ Por favor, introduce el nombre del libro.")
     elif not capitulo_input or capitulo_input < 1:
@@ -210,3 +185,6 @@ if generar_btn:
             st.markdown(resultado, unsafe_allow_html=True) # Usar markdown para formato
             st.success("✅ Exégesis generada con éxito.")
         # Los errores durante la generación ya se muestran dentro de generar_exegesis
+elif generar_btn and not api_configured:
+    # Esto no debería suceder porque el botón está deshabilitado, pero como salvaguarda
+    st.error("La API Key no está configurada. No se puede generar la exégesis.")
